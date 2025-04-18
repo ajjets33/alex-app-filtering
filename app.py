@@ -1,6 +1,6 @@
 import streamlit as st
 import numpy as np
-import cv2
+from skimage import filters, feature, exposure
 from PIL import Image
 import io
 
@@ -11,31 +11,47 @@ def load_image(image_file):
     return None
 
 def apply_sobel_edge_detection(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-    magnitude = np.sqrt(sobelx**2 + sobely**2)
-    magnitude = np.uint8(255 * magnitude / np.max(magnitude))
-    return cv2.cvtColor(magnitude, cv2.COLOR_GRAY2RGB)
+    if len(image.shape) == 3:
+        gray = np.mean(image, axis=2)
+    else:
+        gray = image
+    
+    edges_h = filters.sobel_h(gray)
+    edges_v = filters.sobel_v(gray)
+    magnitude = np.sqrt(edges_h**2 + edges_v**2)
+    
+    # Normalize to 0-255 range
+    magnitude = (magnitude * 255 / magnitude.max()).astype(np.uint8)
+    return np.stack([magnitude] * 3, axis=-1)
 
-def apply_custom_convolution(image, kernel_size, sigma):
-    kernel = cv2.getGaussianKernel(kernel_size, sigma)
-    kernel_2d = kernel @ kernel.T
-    filtered = cv2.filter2D(image, -1, kernel_2d)
-    return filtered
+def apply_custom_convolution(image, sigma):
+    if len(image.shape) == 3:
+        result = np.zeros_like(image)
+        for i in range(3):
+            result[:,:,i] = filters.gaussian(image[:,:,i], sigma=sigma)
+        return (result * 255).astype(np.uint8)
+    else:
+        filtered = filters.gaussian(image, sigma=sigma)
+        return (filtered * 255).astype(np.uint8)
 
 def apply_artistic_filter(image, intensity):
-    # Convert to LAB color space
-    lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
-    l, a, b = cv2.split(lab)
-    
-    # Apply CLAHE to L channel
-    clahe = cv2.createCLAHE(clipLimit=intensity, tileGridSize=(8,8))
-    l = clahe.apply(l)
-    
-    # Merge channels
-    lab = cv2.merge([l, a, b])
-    return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+    if len(image.shape) == 3:
+        # Convert to LAB color space-like enhancement
+        result = np.zeros_like(image)
+        for i in range(3):
+            result[:,:,i] = exposure.equalize_adapthist(
+                image[:,:,i], 
+                kernel_size=int(image.shape[0]/8),
+                clip_limit=intensity/5
+            )
+        return (result * 255).astype(np.uint8)
+    else:
+        enhanced = exposure.equalize_adapthist(
+            image,
+            kernel_size=int(image.shape[0]/8),
+            clip_limit=intensity/5
+        )
+        return (enhanced * 255).astype(np.uint8)
 
 def main():
     st.set_page_config(page_title="Image Filter App", layout="wide")
@@ -69,9 +85,8 @@ def main():
                 filtered_image = apply_sobel_edge_detection(image)
             
             elif filter_type == "Custom Convolution":
-                kernel_size = st.sidebar.slider("Kernel Size", 3, 15, 5, step=2)
-                sigma = st.sidebar.slider("Sigma", 0.1, 5.0, 1.0, step=0.1)
-                filtered_image = apply_custom_convolution(image, kernel_size, sigma)
+                sigma = st.sidebar.slider("Blur Intensity", 0.1, 5.0, 1.0, step=0.1)
+                filtered_image = apply_custom_convolution(image, sigma)
             
             elif filter_type == "Artistic Enhancement":
                 intensity = st.sidebar.slider("Enhancement Intensity", 1.0, 5.0, 2.0, step=0.1)
@@ -90,9 +105,6 @@ def main():
                     file_name="filtered_image.png",
                     mime="image/png"
                 )
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
